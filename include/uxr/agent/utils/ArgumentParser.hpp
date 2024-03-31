@@ -38,6 +38,7 @@
 #include <uxr/agent/transport/serial/MultiTermiosAgentLinux.hpp>
 #include <uxr/agent/transport/serial/PseudoTerminalAgentLinux.hpp>
 #include <uxr/agent/transport/serial/baud_rate_table_linux.h>
+#include <uxr/agent/transport/i2c/I2CAgentLinux.hpp>
 
 #ifdef UAGENT_SOCKETCAN_PROFILE
 #include <uxr/agent/transport/can/CanAgentLinux.hpp>
@@ -71,6 +72,7 @@ enum class TransportKind
     SERIAL,
     MULTISERIAL,
     PSEUDOTERMINAL,
+    I2C,
 #endif // _WIN32
     HELP
 };
@@ -873,6 +875,59 @@ private:
     Argument<std::string> file_;
 };
 
+/*************************************************************************************************
+ * Specific arguments for I2C transports
+ *************************************************************************************************/
+template <typename AgentType>
+class I2CArgs
+{
+public:
+    I2CArgs()
+        : dev_("-D", "--dev")
+        , addr_("-A", "--addr", DEFAULT_I2C_ADDR)
+    {
+    }
+
+    bool parse(
+            int argc,
+            char** argv)
+    {
+        ParseResult parse_dev = dev_.parse_argument(argc, argv);
+        if (ParseResult::VALID != parse_dev)
+        {
+            std::cerr << "Warning: '--dev <value>' is required" << std::endl;
+        }
+        else
+        {
+            addr_.parse_argument(argc, argv);
+        }
+
+        return (ParseResult::VALID == parse_dev ? true : false);
+    }
+
+    const std::string dev()
+    {
+        return dev_.value();
+    }
+
+    const std::string addr()
+    {
+        return addr_.value();
+    }
+
+    const std::string get_help() const
+    {
+        std::stringstream ss;
+        ss << "    " << dev_.get_help() << std::endl
+           << "    " << addr_.get_help() << std::endl;
+        return ss.str();
+    }
+
+private:
+    Argument<std::string> dev_;
+    Argument<std::string> addr_;
+};
+
 #ifdef UAGENT_SOCKETCAN_PROFILE
 /*************************************************************************************************
  * Specific arguments for CAN transports
@@ -950,6 +1005,7 @@ public:
         , serial_args_()
         , multiserial_args_()
         , pseudoterminal_args_()
+        , i2c_args_()
 #endif // _WIN32
         , transport_kind_(transport_kind)
         , agent_server_()
@@ -1000,6 +1056,11 @@ public:
             case TransportKind::PSEUDOTERMINAL:
             {
                 result &= pseudoterminal_args_.parse(argc_, argv_);
+                break;
+            }
+            case TransportKind::I2C:
+            {
+                result &= i2c_args_.parse(argc_, argv_);
                 break;
             }
 #endif // _WIN32
@@ -1092,6 +1153,8 @@ public:
         ss << "  * SERIAL (serial, multiserial, pseudoterminal)" << std::endl;
         ss << pseudoterminal_args_.get_help();
         ss << serial_args_.get_help();
+        ss << "  * I2C (i2c)" << std::endl;
+        ss << i2c_args_.get_help();
 #ifdef UAGENT_SOCKETCAN_PROFILE
         ss << "  * CAN FD (canfd)" << std::endl;
         ss << can_args_.get_help();
@@ -1114,6 +1177,7 @@ private:
     SerialArgs<AgentType> serial_args_;
     MultiSerialArgs<AgentType> multiserial_args_;
     PseudoTerminalArgs<AgentType> pseudoterminal_args_;
+    I2CArgs<AgentType> i2c_args_;
 #endif // _WIN32
     TransportKind transport_kind_;
     std::unique_ptr<AgentType> agent_server_;
@@ -1172,6 +1236,24 @@ template<> inline bool ArgumentParser<PseudoTerminalAgent>::launch_agent()
     else
     {
         std::cerr << "Error while starting pseudoterminal agent!" << std::endl;
+    }
+
+    return false;
+}
+
+template<> inline bool ArgumentParser<I2CAgent>::launch_agent()
+{   
+    uint8_t addr = (uint8_t)(strtoul(i2c_args_.addr().c_str(), NULL, 16) & 0xFF);
+    agent_server_.reset(new I2CAgent(
+            i2c_args_.dev().c_str(), addr, utils::get_mw_kind(common_args_.middleware())));
+    if (agent_server_->start())
+    {
+        common_args_.apply_actions(agent_server_);
+        return true;
+    }
+    else
+    {
+        std::cerr << "Error while starting i2c agent!" << std::endl;
     }
 
     return false;

@@ -47,6 +47,8 @@ size_t FramingIO::write_framed_msg(
         uint8_t remote_addr,
         TransportRc& transport_rc)
 {
+    remote_addr_ = remote_addr;
+
     /* Buffer being flag. */
     write_buffer_[0] = framing_begin_flag;
     write_buffer_pos_ = 1;
@@ -342,6 +344,11 @@ size_t FramingIO::read_framed_msg(
     }
 
     return rv;
+}
+
+uint8_t FramingIO::get_remote_addr() 
+{
+    return remote_addr_;
 }
 
 void FramingIO::update_crc(
