@@ -884,48 +884,79 @@ class I2CArgs
 public:
     I2CArgs()
         : dev_("-D", "--dev")
-        , addr_("-A", "--addr", DEFAULT_I2C_ADDR)
-    {
-    }
+        , addrs_("-A", "--addrs")
+        , file_("-f", "--file")
+    {}
 
     bool parse(
             int argc,
             char** argv)
     {
+        bool rv = false;
+
         ParseResult parse_dev = dev_.parse_argument(argc, argv);
-        if (ParseResult::VALID != parse_dev)
-        {
+        ParseResult parse_addrs = dev_.parse_argument(argc, argv);
+        ParseResult parse_file = dev_.parse_argument(argc, argv);
+        if (parse_dev != ParseResult::VALID) {
             std::cerr << "Warning: '--dev <value>' is required" << std::endl;
         }
-        else
-        {
-            addr_.parse_argument(argc, argv);
+        else if(parse_addrs != ParseResult::VALID || parse_file != ParseResult::VALID) {
+            std::cerr << "Warning: either '--addrs <value>' or '--file <value>' is required" << std::endl;
+        }
+        else {
+            rv = true;
         }
 
-        return (ParseResult::VALID == parse_dev ? true : false);
+        return rv;
     }
 
-    const std::string dev()
-    {
+    const std::string dev() {
         return dev_.value();
     }
 
-    const std::string addr()
-    {
-        return addr_.value();
+    std::vector<uint8_t> addrs() {
+        std::vector<uint8_t> addrs;
+
+        if(addrs_.found()) {
+            std::istringstream iss(addrs_.value());
+            for (std::string s; iss >> s; )
+            {
+                addrs.push_back(static_cast<uint8_t>(strtoul(s.c_str(), NULL, 0) & 0xFF));
+            }
+        }
+        else if (file_.found())
+        {
+            std::string line;
+            std::ifstream myfile(file_.value());
+
+            if (myfile.fail())
+            {
+                std::cerr << "Error opening file: " << strerror(errno) << std::endl;
+            }
+
+            while (std::getline(myfile, line))
+            {
+                addrs.push_back(static_cast<uint8_t>(strtoul(line.c_str(), NULL, 0) & 0xFF));
+            }
+        }
+
+        return addrs;
     }
 
     const std::string get_help() const
     {
         std::stringstream ss;
         ss << "    " << dev_.get_help() << std::endl
-           << "    " << addr_.get_help() << std::endl;
+           << "    " << addrs_.get_help() << std::endl
+           << "    " << file_.get_help() << std::endl;
+           
         return ss.str();
     }
 
 private:
     Argument<std::string> dev_;
-    Argument<std::string> addr_;
+    Argument<std::string> addrs_;
+    Argument<std::string> file_;
 };
 
 #ifdef UAGENT_SOCKETCAN_PROFILE
@@ -1243,9 +1274,8 @@ template<> inline bool ArgumentParser<PseudoTerminalAgent>::launch_agent()
 
 template<> inline bool ArgumentParser<I2CAgent>::launch_agent()
 {   
-    uint8_t addr = (uint8_t)(strtoul(i2c_args_.addr().c_str(), NULL, 16) & 0xFF);
     agent_server_.reset(new I2CAgent(
-            i2c_args_.dev().c_str(), addr, utils::get_mw_kind(common_args_.middleware())));
+            i2c_args_.dev().c_str(), i2c_args_.addrs(), utils::get_mw_kind(common_args_.middleware())));
     if (agent_server_->start())
     {
         common_args_.apply_actions(agent_server_);

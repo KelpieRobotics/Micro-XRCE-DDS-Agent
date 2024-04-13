@@ -20,8 +20,6 @@
 #include <uxr/agent/transport/stream_framing/StreamFramingProtocol.hpp>
 #include <sys/poll.h>
 
-#define DEFAULT_I2C_ADDR "0x01"
-
 namespace eprosima {
 namespace uxr {
 
@@ -30,7 +28,7 @@ class I2CAgent : public Server<I2CEndPoint>
 public:
     I2CAgent(
             char const * dev,
-            uint8_t agent_addr,
+            std::vector<uint8_t> addrs,
             Middleware::Kind middleware_kind);
 
     ~I2CAgent();
@@ -58,23 +56,13 @@ private:
             OutputPacket<I2CEndPoint> output_packet,
             TransportRc& transport_rc) final;
 
-    ssize_t write_data(
-            uint8_t* buf,
-            size_t len,
-            TransportRc& transport_rc);
-
-    ssize_t read_data(
-            uint8_t* buf,
-            size_t len,
-            int timeout,
-            TransportRc& transport_rc);
-
 private:
+    static const uint8_t buffer_len_[2];
     const std::string dev_;
-    const uint32_t agent_addr_;
-    struct pollfd poll_fd_;
+    std::vector<uint8_t> addrs_;
+    size_t last_addr_;
+    int fd_;
     uint8_t buffer_[SERVER_BUFFER_SIZE];
-    FramingIO framing_io_;
 };
 
 } // namespace uxr
