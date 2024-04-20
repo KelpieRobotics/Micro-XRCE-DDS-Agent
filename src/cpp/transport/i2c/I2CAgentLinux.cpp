@@ -58,7 +58,7 @@ I2CAgent::I2CAgent(
             std::bind(&I2CAgent::read_data, this, addr, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4)
         );
 
-        framing_ios_.insert(std::pair<uint8_t, FramingIO>(addr, std::move(temp_framing_io)));
+        framing_ios_.insert(std::pair<uint8_t, FramingIO>(addr, temp_framing_io));
     }
 }
 
