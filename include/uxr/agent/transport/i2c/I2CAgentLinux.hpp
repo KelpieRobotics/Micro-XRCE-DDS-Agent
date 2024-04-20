@@ -18,7 +18,6 @@
 #include <uxr/agent/transport/Server.hpp>
 #include <uxr/agent/transport/endpoint/I2CEndPoint.hpp>
 #include <uxr/agent/transport/stream_framing/StreamFramingProtocol.hpp>
-#include <sys/poll.h>
 
 namespace eprosima {
 namespace uxr {
@@ -47,8 +46,29 @@ private:
     bool handle_error(
             TransportRc transport_rc) final;
 
+    bool set_timeout(
+            int timeout);
+
+    ssize_t read_data(
+            uint8_t addr, 
+            uint8_t* buf, 
+            size_t len,
+            int timeout, 
+            TransportRc transport_rc);
+
+    ssize_t write_data(
+            uint8_t addr, 
+            uint8_t* buf, 
+            size_t len, 
+            TransportRc transport_rc);
+
     bool recv_message(
             InputPacket<I2CEndPoint>& input_packet,
+            int timeout,
+            TransportRc& transport_rc) final { return false; };
+
+    bool recv_message(
+            std::vector<InputPacket<I2CEndPoint>>& input_packet,
             int timeout,
             TransportRc& transport_rc) final;
 
@@ -57,12 +77,11 @@ private:
             TransportRc& transport_rc) final;
 
 private:
-    static const uint8_t buffer_len_[2];
     const std::string dev_;
-    std::vector<uint8_t> addrs_;
-    size_t last_addr_;
+    std::map<uint8_t, FramingIO> framing_ios_;
     int fd_;
     uint8_t buffer_[SERVER_BUFFER_SIZE];
+    int timeout_;
 };
 
 } // namespace uxr
