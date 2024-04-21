@@ -346,11 +346,6 @@ size_t FramingIO::read_framed_msg(
     return rv;
 }
 
-uint8_t FramingIO::get_remote_addr() 
-{
-    return remote_addr_;
-}
-
 void FramingIO::update_crc(
         uint16_t& crc,
         const uint8_t data)

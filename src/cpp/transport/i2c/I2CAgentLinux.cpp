@@ -20,6 +20,7 @@
 // TODO: General TODOs
 // 1. [ ] Logging
 // 2. [ ] transport_rc TODO: current
+//    - Gets set to ok by default, only change it when error
 // 3. [ ] Verify attributes
 
 #include <uxr/agent/transport/i2c/I2CAgentLinux.hpp>
@@ -58,7 +59,7 @@ I2CAgent::I2CAgent(
             std::bind(&I2CAgent::read_data, this, addr, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4)
         );
 
-        framing_ios_.insert(std::pair<uint8_t, FramingIO>(addr, temp_framing_io));
+        framing_ios_.insert(std::pair<uint8_t, FramingIO>(addr, std::move(temp_framing_io)));
     }
 }
 
@@ -70,6 +71,7 @@ bool I2CAgent::init() {
     fd_ = open(dev_.c_str(), O_RDWR);
 
     if(fd_ >= 0) {
+        rv = true;
         UXR_AGENT_LOG_INFO(
             UXR_DECORATE_GREEN("running..."),
             "device: {}, fd: {}",
@@ -115,7 +117,6 @@ bool I2CAgent::fini() {
 
 bool I2CAgent::handle_error(TransportRc transport_rc) {
     // TODO: Remove clients from addrs_ when X multiple attempts? Useful for autodetection?
-    
     return fini() && init();
 }
 
@@ -192,10 +193,10 @@ ssize_t I2CAgent::read_data(
     set_timeout(timeout);
 
     // Try reading len from a slave
-    if(ioctl(fd_, I2C_RDWR, &len_request_msgset) == 0) {
+    if(ioctl(fd_, I2C_RDWR, &len_request_msgset) >= 0) {
         // Slave responded
 
-        if(avail_len[0] != 0 && avail_len[1] != 0) {
+        if(avail_len[0] != 0 || avail_len[1] != 0) {
             // Only receive up to len bytes
             if(avail_len[0] > buf_len[0] || (avail_len[0] == buf_len[0] && avail_len[1] > buf_len[1])) {
                 avail_len[0] = buf_len[0];
@@ -208,7 +209,7 @@ ssize_t I2CAgent::read_data(
             data_request_msgs[0].buf[1] = avail_len[0];
             data_request_msgs[0].buf[2] = avail_len[1];
             data_request_msgs[1].len = len;
-            if(ioctl(fd_, I2C_RDWR, &data_request_msgset) == 0) {
+            if(ioctl(fd_, I2C_RDWR, &data_request_msgset) >= 0) {
                 // Data retrieval sucessful
                 bytes_read = static_cast<ssize_t>(len);
                 transport_rc = TransportRc::ok;
@@ -259,13 +260,14 @@ ssize_t I2CAgent::write_data(
 
     msg.addr = addr;
     msg.flags = 0;
-    msg.len = len;
-    msg.buf = buf;
+    msg.len = len+1;
+    msg.buf = new uint8_t[len+1]{I2CCommands::WRITE};
+    memcpy(msg.buf+1, buf, len);
 
     msgset.msgs = &msg;
     msgset.nmsgs = 1;
 
-    if(ioctl(fd_, I2C_RDWR, &msgset) == 0) {
+    if(ioctl(fd_, I2C_RDWR, &msgset) >= 0) {
         bytes_written = static_cast<ssize_t>(len);
         transport_rc = TransportRc::ok;
     }
@@ -285,7 +287,7 @@ ssize_t I2CAgent::write_data(
 }
 
 bool I2CAgent::recv_message(
-        std::vector<InputPacket<I2CEndPoint>>& input_packet,
+        std::vector<InputPacket<I2CEndPoint>>& input_packets,
         int timeout,
         TransportRc& transport_rc)
 {
@@ -301,7 +303,7 @@ bool I2CAgent::recv_message(
         } while (bytes_read <= 0 && timeout > 0);
 
         if(bytes_read > 0) {
-            struct InputPacket<I2CEndPoint> temp_packet{};
+            struct InputPacket<I2CEndPoint> temp_packet{}; // TODO: better name
             temp_packet.message.reset(new InputMessage(buffer_, static_cast<size_t>(bytes_read)));
             temp_packet.source = I2CEndPoint(it->first);
             rv = true;
@@ -317,7 +319,7 @@ bool I2CAgent::recv_message(
                     temp_packet.message->get_len());
             }
 
-            input_packet.push_back(std::move(temp_packet));
+            input_packets.push_back(std::move(temp_packet));
         }
     }
 

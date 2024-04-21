@@ -892,22 +892,17 @@ public:
             int argc,
             char** argv)
     {
-        bool rv = false;
-
         ParseResult parse_dev = dev_.parse_argument(argc, argv);
-        ParseResult parse_addrs = dev_.parse_argument(argc, argv);
-        ParseResult parse_file = dev_.parse_argument(argc, argv);
+        ParseResult parse_addrs = addrs_.parse_argument(argc, argv);
+        ParseResult parse_file = file_.parse_argument(argc, argv);
         if (parse_dev != ParseResult::VALID) {
             std::cerr << "Warning: '--dev <value>' is required" << std::endl;
         }
-        else if(parse_addrs != ParseResult::VALID || parse_file != ParseResult::VALID) {
+        else if(parse_addrs != ParseResult::VALID && parse_file != ParseResult::VALID) {
             std::cerr << "Warning: either '--addrs <value>' or '--file <value>' is required" << std::endl;
         }
-        else {
-            rv = true;
-        }
 
-        return rv;
+        return (parse_addrs == ParseResult::VALID) ^ (parse_file == ParseResult::VALID) ? true : false;
     }
 
     const std::string dev() {

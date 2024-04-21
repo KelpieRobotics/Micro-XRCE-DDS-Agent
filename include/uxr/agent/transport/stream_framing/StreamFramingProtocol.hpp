@@ -153,12 +153,6 @@ public:
             int& timeout,
             TransportRc& transport_rc);
 
-    /**
-     * @brief Remote address getter (to be used with I/O callback)
-     * @return uint8_t Address of the message source/destination depending on current operation
-     */
-    uint8_t get_remote_addr();
-
 private:
     /**
      * @brief Static method to update CRC.
