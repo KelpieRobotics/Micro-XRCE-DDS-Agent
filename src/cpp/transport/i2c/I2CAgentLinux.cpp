@@ -23,6 +23,16 @@
 //    - Gets set to ok by default, only change it when error
 // 3. [ ] Verify attributes
 
+// TODO: Optimization
+// 1. [ x ] Reduce READ_LENs
+//        - Cache the result of READ_LEN - what we actually read
+//        - If in the next read cycle we try to read less or equal to what we know is available, skip READ_LEN
+// 2. [ ] Remove READ_LEN
+//        - Master sends READ_DATA command with number of bytes it's trying to read
+//        - Master sends read request
+//        - Slave responds with numbers of bytes it actually is going to send (2B) followed by the data (len B)
+//        - If slave has less bytes to send than master requires, it pads it with 0s (this is potentially inefficient, however if block transports are supported no padding will be needed)
+
 #include <uxr/agent/transport/i2c/I2CAgentLinux.hpp>
 #include <uxr/agent/transport/stream_framing/StreamFramingProtocol.hpp>
 #include <uxr/agent/utils/Conversion.hpp>
@@ -36,6 +46,7 @@
 
 #include <linux/i2c-dev.h>
 #include <linux/i2c.h>
+#include <errno.h>
 
 namespace eprosima {
 namespace uxr {
@@ -60,6 +71,7 @@ I2CAgent::I2CAgent(
         );
 
         framing_ios_.insert(std::pair<uint8_t, FramingIO>(addr, std::move(temp_framing_io)));
+        read_len_available_.insert(std::pair<uint8_t, uint16_t>(addr, 0));
     }
 }
 
@@ -147,99 +159,114 @@ bool I2CAgent::set_timeout(int timeout) {
     return false;
 }
 
+ssize_t I2CAgent::read_len(
+        uint8_t addr,
+        TransportRc& transport_rc)
+{
+    i2c_msg msgs[2];
+    i2c_rdwr_ioctl_data msgset;
+
+    msgs[0].addr = addr;
+    msgs[0].flags = 0;
+    msgs[0].len = 1;
+    msgs[0].buf = new uint8_t[1]{I2CCommands::READ_LEN};
+    
+    msgs[1].addr = addr;
+    msgs[1].flags = I2C_M_RD | I2C_M_NOSTART;
+    msgs[1].len = 2;
+    msgs[1].buf = new uint8_t[2];
+
+    msgset.msgs = msgs;
+    msgset.nmsgs = 2;
+
+    if(ioctl(fd_, I2C_RDWR, &msgset) < 0) {
+        switch(errno) {
+            case ETIMEDOUT: 
+                // TODO: Logging
+                transport_rc = TransportRc::timeout_error;
+                break;
+            default:
+                // TODO: Logging
+                transport_rc = TransportRc::connection_error;
+                break;
+        }
+
+        return -1;
+    }
+
+    return static_cast<ssize_t>((static_cast<size_t>(msgs[1].buf[0]) << 8) + (static_cast<size_t>(msgs[1].buf[1])));
+}
+
 ssize_t I2CAgent::read_data(
         uint8_t addr, 
         uint8_t* buf, 
         size_t len,
         int timeout, 
-        TransportRc transport_rc)
+        TransportRc& transport_rc)
 {
     ssize_t bytes_read = 0;
+    uint16_t& read_len_available = read_len_available_.at(addr); // TODO: Exception handeling
 
-    uint8_t avail_len[2], buf_len[2] = {static_cast<uint8_t>((len & 0xFF00) >> 8), static_cast<uint8_t>(len & 0x00FF)}; // TODO: better names
+    struct i2c_msg msgs[2];
+    struct i2c_rdwr_ioctl_data msgset;
 
-    struct i2c_msg len_request_msgs[2], data_request_msgs[2];
-    struct i2c_rdwr_ioctl_data len_request_msgset, data_request_msgset;
 
-    // Prepare messages
-    //// Len request messages
-    len_request_msgs[0].addr = addr;
-    len_request_msgs[0].flags = 0;
-    len_request_msgs[0].len = 1;
-    len_request_msgs[0].buf = new uint8_t[1]{I2CCommands::READ_LEN};
-    
-    len_request_msgs[1].addr = addr;
-    len_request_msgs[1].flags = I2C_M_RD | I2C_M_NOSTART;
-    len_request_msgs[1].len = 2;
-    len_request_msgs[1].buf = avail_len;
-
-    len_request_msgset.msgs = len_request_msgs;
-    len_request_msgset.nmsgs = 2;
-
-    //// Data request messages
-    data_request_msgs[0].addr = addr;
-    data_request_msgs[0].flags = 0;
-    data_request_msgs[0].len = 3;
-    data_request_msgs[0].buf = new uint8_t[3]{I2CCommands::READ_DATA};
-
-    data_request_msgs[1].addr = addr;
-    data_request_msgs[1].flags = I2C_M_RD | I2C_M_NOSTART;
-    data_request_msgs[1].buf = buf;
-
-    data_request_msgset.msgs = data_request_msgs;
-    data_request_msgset.nmsgs = 2;
-    
-    // Set timeout
     set_timeout(timeout);
 
-    // Try reading len from a slave
-    if(ioctl(fd_, I2C_RDWR, &len_request_msgset) >= 0) {
-        // Slave responded
+    if(len > read_len_available) {
+        ssize_t len_read = read_len(addr, transport_rc); // TODO: better name
 
-        if(avail_len[0] != 0 || avail_len[1] != 0) {
-            // Only receive up to len bytes
-            if(avail_len[0] > buf_len[0] || (avail_len[0] == buf_len[0] && avail_len[1] > buf_len[1])) {
-                avail_len[0] = buf_len[0];
-                avail_len[1] = buf_len[1];
-            }
-
-            // Reconstruct len to read
-            len = (static_cast<size_t>(avail_len[0]) << 8) + (static_cast<size_t>(avail_len[1]));
-
-            data_request_msgs[0].buf[1] = avail_len[0];
-            data_request_msgs[0].buf[2] = avail_len[1];
-            data_request_msgs[1].len = len;
-            if(ioctl(fd_, I2C_RDWR, &data_request_msgset) >= 0) {
-                // Data retrieval sucessful
-                bytes_read = static_cast<ssize_t>(len);
-                transport_rc = TransportRc::ok;
-            }
-            else {
-                // Reading data failed.
-                // TODO: Logging
-                // TODO: transport_rc
-                switch(errno) {
-                    // TODO: handle errors
-                    default:
-                        // Unknown error
-                        break;
+        if(len_read >= 0) {
+            size_t ulen_read = static_cast<size_t>(len_read);
+            if(ulen_read < len) {
+                if(ulen_read >= read_len_available) {
+                    // Successful but still not enough
+                    len = ulen_read;
+                }
+                else {
+                    // ERROR, slave lost data?
+                    // TODO: Logging
                 }
             }
+
+            read_len_available = ulen_read;
         }
         else {
-            // No data to read
+            // ERROR getting len
             // TODO: Logging
-            // TODO: transport_rc
+
+            return bytes_read;
         }
     }
+
+    msgs[0].addr = addr;
+    msgs[0].flags = 0;
+    msgs[0].len = 3;
+    msgs[0].buf = new uint8_t[3]{I2CCommands::READ_DATA, static_cast<uint8_t>((len & 0xFF00) >> 8), static_cast<uint8_t>(len & 0x00FF)};
+
+    msgs[1].addr = addr;
+    msgs[1].flags = I2C_M_RD | I2C_M_NOSTART;
+    msgs[1].len = len;
+    msgs[1].buf = buf;
+
+    msgset.msgs = msgs;
+    msgset.nmsgs = 2;
+
+    if(ioctl(fd_, I2C_RDWR, &msgset) >= 0) {
+        // Data retrieval sucessful
+        bytes_read = static_cast<ssize_t>(len);
+    }
     else {
-        // Slave is unresponsive. Potentially offline
-        // TODO: Logging
+        // Reading data failed.
         // TODO: transport_rc
         switch(errno) {
-            // TODO: handle errors
+            case ETIMEDOUT:
+                // TODO: Logging
+                transport_rc = TransportRc::timeout_error;
+                break;
             default:
-                // Unknown error
+                // TODO: Logging
+                transport_rc = TransportRc::connection_error;
                 break;
         }
     }
@@ -251,7 +278,7 @@ ssize_t I2CAgent::write_data(
         uint8_t addr, 
         uint8_t* buf, 
         size_t len, 
-        TransportRc transport_rc) 
+        TransportRc& transport_rc) 
 {
     ssize_t bytes_written = 0;
 
@@ -269,16 +296,17 @@ ssize_t I2CAgent::write_data(
 
     if(ioctl(fd_, I2C_RDWR, &msgset) >= 0) {
         bytes_written = static_cast<ssize_t>(len);
-        transport_rc = TransportRc::ok;
     }
     else {
         // Writing failed
-        // TODO: Logging
-        // TODO: transport_rc
         switch(errno) {
-            // TODO: handle errors (like early NACK)
+            case ETIMEDOUT:
+                // TODO: Logging
+                transport_rc = TransportRc::timeout_error;
+                break;
             default:
-                // Unknown error
+                // TODO: Logging
+                transport_rc = TransportRc::connection_error;
                 break;
         }
     }
@@ -307,7 +335,6 @@ bool I2CAgent::recv_message(
             temp_packet.message.reset(new InputMessage(buffer_, static_cast<size_t>(bytes_read)));
             temp_packet.source = I2CEndPoint(it->first);
             rv = true;
-            transport_rc = TransportRc::ok;
 
             uint32_t raw_client_key;
             if (Server<I2CEndPoint>::get_client_key(temp_packet.source, raw_client_key))
@@ -349,7 +376,6 @@ bool I2CAgent::send_message(
 
     if(bytes_written > 0 && static_cast<size_t>(bytes_written) == output_packet.message->get_len()) {
         rv = true;
-        transport_rc = TransportRc::ok; // FIXME: here or in the transport callback?
 
         uint32_t raw_client_key;
         if (Server<I2CEndPoint>::get_client_key(output_packet.destination, raw_client_key))

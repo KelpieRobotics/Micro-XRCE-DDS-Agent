@@ -49,18 +49,22 @@ private:
     bool set_timeout(
             int timeout);
 
+    ssize_t read_len(
+            uint8_t addr,
+            TransportRc& transport_rc);
+
     ssize_t read_data(
             uint8_t addr, 
             uint8_t* buf, 
             size_t len,
             int timeout, 
-            TransportRc transport_rc);
+            TransportRc& transport_rc);
 
     ssize_t write_data(
             uint8_t addr, 
             uint8_t* buf, 
             size_t len, 
-            TransportRc transport_rc);
+            TransportRc& transport_rc);
 
     bool recv_message(
             InputPacket<I2CEndPoint>& input_packet,
@@ -79,6 +83,7 @@ private:
 private:
     const std::string dev_;
     std::map<uint8_t, FramingIO> framing_ios_;
+    std::map<uint8_t, uint16_t> read_len_available_;
     int fd_;
     uint8_t buffer_[SERVER_BUFFER_SIZE];
     int timeout_;
