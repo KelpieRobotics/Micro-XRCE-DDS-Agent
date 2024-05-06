@@ -18,10 +18,11 @@
 // 3. [ ] SMBUS?
 
 // TODO: General TODOs
-// 1. [ ] Logging
-// 2. [ ] transport_rc TODO: current
+// 1. [ X ] Logging
+// 2. [ X ] transport_rc
 //    - Gets set to ok by default, only change it when error
 // 3. [ ] Verify attributes
+// 4. [ ] Cleanup comments
 
 // TODO: Optimization
 // 1. [ x ] Reduce READ_LENs
@@ -91,11 +92,16 @@ bool I2CAgent::init() {
         );
     }
     else {
-        UXR_AGENT_LOG_ERROR(
-            UXR_DECORATE_RED("Cannot open I2C device file."),
-            "device: {}, errno: {}",
-            dev_, errno
-        );
+        switch(errno) {
+            default:
+                // Unknown error
+                UXR_AGENT_LOG_ERROR(
+                    UXR_DECORATE_RED("Unknown error while opening file descriptor"),
+                    "device: {}, errno: {}",
+                    dev_, errno
+                );
+                break;
+        }
     }
 
     return rv;
@@ -116,11 +122,16 @@ bool I2CAgent::fini() {
         rv = true;
     }
     else {
-        UXR_AGENT_LOG_ERROR(
-            UXR_DECORATE_RED("close server error"),
-            "fd: {}, device: {}, errno: {}",
-            fd_, dev_, errno
-        );
+        switch(errno) {
+            default:
+                // Unknown error
+                UXR_AGENT_LOG_ERROR(
+                    UXR_DECORATE_RED("Unknown error while closing file descriptor"),
+                    "device: {}, errno: {}",
+                    dev_, errno
+                );
+                break;
+        }
     }
     fd_ = -1;
 
@@ -129,6 +140,13 @@ bool I2CAgent::fini() {
 
 bool I2CAgent::handle_error(TransportRc transport_rc) {
     // TODO: Remove clients from addrs_ when X multiple attempts? Useful for autodetection?
+
+    UXR_AGENT_LOG_INFO(
+        "Resetting connection", // TODO: Better log
+        "device: {}, transport_rc: {}",
+        dev_, transport_rc
+    );
+
     return fini() && init();
 }
 
@@ -150,7 +168,11 @@ bool I2CAgent::set_timeout(int timeout) {
             else {
                 timeout_ = -1;
 
-                // TODO: Logging
+                UXR_AGENT_LOG_WARN(
+                    UXR_DECORATE_YELLOW("Unable to set timeout"),
+                    "device: {}, timeout: {}",
+                    dev_, timeout
+                );
             }
         }
         else return true;
@@ -182,11 +204,19 @@ ssize_t I2CAgent::read_len(
     if(ioctl(fd_, I2C_RDWR, &msgset) < 0) {
         switch(errno) {
             case ETIMEDOUT: 
-                // TODO: Logging
+                UXR_AGENT_LOG_ERROR(
+                    UXR_DECORATE_RED("Device timed out while reading bytes available"),
+                    "address: {}",
+                    addr
+                );
                 transport_rc = TransportRc::timeout_error;
                 break;
             default:
-                // TODO: Logging
+                UXR_AGENT_LOG_ERROR(
+                    UXR_DECORATE_RED("Unknown error while reading bytes available"),
+                    "address: {}, errno: {}",
+                    addr, errno
+                );
                 transport_rc = TransportRc::connection_error;
                 break;
         }
@@ -219,21 +249,24 @@ ssize_t I2CAgent::read_data(
         if(len_read >= 0) {
             size_t ulen_read = static_cast<size_t>(len_read);
             if(ulen_read < len) {
-                if(ulen_read >= read_len_available) {
-                    // Successful but still not enough
-                    len = ulen_read;
-                }
+                if(ulen_read >= read_len_available) len = ulen_read;
                 else {
-                    // ERROR, slave lost data?
-                    // TODO: Logging
+                    UXR_AGENT_LOG_WARN(
+                        UXR_DECORATE_YELLOW("Client lost some data"),
+                        "address: {}, cached size: {}, actual size: {}",
+                        addr, read_len_available, ulen_read
+                    );
                 }
             }
 
             read_len_available = ulen_read;
         }
         else {
-            // ERROR getting len
-            // TODO: Logging
+            UXR_AGENT_LOG_ERROR(
+                UXR_DECORATE_RED("Unable to communicate with client. Skipping..."),
+                "address: {}",
+                addr
+            );
 
             return bytes_read;
         }
@@ -258,14 +291,22 @@ ssize_t I2CAgent::read_data(
     }
     else {
         // Reading data failed.
-        // TODO: transport_rc
         switch(errno) {
             case ETIMEDOUT:
-                // TODO: Logging
+                UXR_AGENT_LOG_ERROR(
+                    UXR_DECORATE_RED("Device timed out while reading data"),
+                    "address: {}",
+                    addr
+                );
+
                 transport_rc = TransportRc::timeout_error;
                 break;
             default:
-                // TODO: Logging
+                UXR_AGENT_LOG_ERROR(
+                    UXR_DECORATE_RED("Unknown error while reading data"),
+                    "address: {}, errno: {}",
+                    addr, errno
+                );
                 transport_rc = TransportRc::connection_error;
                 break;
         }
@@ -301,11 +342,20 @@ ssize_t I2CAgent::write_data(
         // Writing failed
         switch(errno) {
             case ETIMEDOUT:
-                // TODO: Logging
+                UXR_AGENT_LOG_ERROR(
+                    UXR_DECORATE_RED("Device timed out while writing data"),
+                    "address: {}",
+                    addr
+                );
+
                 transport_rc = TransportRc::timeout_error;
                 break;
             default:
-                // TODO: Logging
+                UXR_AGENT_LOG_ERROR(
+                    UXR_DECORATE_RED("Unknown error while writing data"),
+                    "address: {}, errno: {}",
+                    addr, errno
+                );
                 transport_rc = TransportRc::connection_error;
                 break;
         }
