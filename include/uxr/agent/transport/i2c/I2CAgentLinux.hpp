@@ -67,9 +67,9 @@ private:
             TransportRc& transport_rc);
 
     bool recv_message(
-            InputPacket<I2CEndPoint>& input_packet,
-            int timeout,
-            TransportRc& transport_rc) final { return false; };
+            InputPacket<I2CEndPoint>& /*input_packet*/,
+            int /*timeout*/,
+            TransportRc& /*transport_rc*/) final { return false; };
 
     bool recv_message(
             std::vector<InputPacket<I2CEndPoint>>& input_packets,
